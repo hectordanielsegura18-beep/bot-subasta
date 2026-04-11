@@ -1,6 +1,10 @@
+import telegram
+print("VERSION:", telegram._version_)
+
 import time
 import threading
 import os
+import asyncio
 from telegram import Update
 from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, filters, ContextTypes
 
@@ -154,9 +158,7 @@ app.add_handler(MessageHandler(filters.TEXT & (~filters.COMMAND), message_handle
 
 
 # ================== RUN ==================
-import asyncio
-
-if __name__ == "__main__":
+if _name_ == "_main_":
     print("Bot corriendo...")
 
     loop = asyncio.new_event_loop()
