@@ -4,9 +4,19 @@ import os
 from telegram import Update
 from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, filters, ContextTypes
 
+# ================== VARIABLES ==================
 TOKEN = os.getenv("TOKEN")
-ADMIN_ID = int(os.getenv("ADMIN_ID"))
+ADMIN_ID = os.getenv("ADMIN_ID")
 
+if not TOKEN:
+    raise ValueError("Falta TOKEN")
+
+if not ADMIN_ID:
+    raise ValueError("Falta ADMIN_ID")
+
+ADMIN_ID = int(ADMIN_ID)
+
+# ================== ESTADO ==================
 timer_total = 180
 end_time = None
 timer_active = False
@@ -18,7 +28,7 @@ highest_user = "Nadie"
 
 lock = threading.Lock()
 
-
+# ================== FUNCIONES ==================
 def format_time(seconds):
     m = seconds // 60
     s = seconds % 60
@@ -59,6 +69,7 @@ def timer_loop(context):
                 pass
 
 
+# ================== COMANDOS ==================
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     global timer_active, end_time, message_id, chat_id_global
     global highest_bid, highest_user
@@ -100,6 +111,7 @@ async def set_time(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("Uso: /settime 5")
 
 
+# ================== MENSAJES ==================
 async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     global end_time, timer_active, highest_bid, highest_user
 
@@ -108,6 +120,7 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     texto = update.message.text
 
+    # Solo números
     if not texto.isdigit():
         return
 
@@ -123,6 +136,7 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
             await update.message.reply_text(f"💰 Nueva mejor oferta: ${oferta} por {user}")
 
+            # Extensión en último minuto
             if remaining <= 60:
                 end_time += 120
                 await update.message.reply_text("🔥 Último minuto! +2 minutos")
@@ -130,6 +144,7 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_text("❌ Oferta menor a la actual")
 
 
+# ================== APP ==================
 app = ApplicationBuilder().token(TOKEN).build()
 
 app.add_handler(CommandHandler("start", start))
@@ -137,5 +152,8 @@ app.add_handler(CommandHandler("stop", stop))
 app.add_handler(CommandHandler("settime", set_time))
 app.add_handler(MessageHandler(filters.TEXT & (~filters.COMMAND), message_handler))
 
-print("Bot corriendo...")
-app.run_polling()
+
+# ================== RUN ==================
+if _name_ == "_main_":
+    print("Bot corriendo...")
+    app.run_polling()
