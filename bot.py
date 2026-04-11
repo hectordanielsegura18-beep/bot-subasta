@@ -154,6 +154,12 @@ app.add_handler(MessageHandler(filters.TEXT & (~filters.COMMAND), message_handle
 
 
 # ================== RUN ==================
-if __name__ == "__main__":
+import asyncio
+
+if _name_ == "_main_":
     print("Bot corriendo...")
-    app.run_polling()
+
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+
+    loop.run_until_complete(app.run_polling())
