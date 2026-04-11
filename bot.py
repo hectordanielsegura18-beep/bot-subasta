@@ -1,5 +1,5 @@
-import telegram
-print("VERSION:", telegram._version_)
+from telegram import _version_
+print("VERSION:", _version_)
 
 import time
 import threading
