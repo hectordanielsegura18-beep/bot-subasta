@@ -95,9 +95,9 @@ async def timer_callback(context: ContextTypes.DEFAULT_TYPE):
             message_id=message_id,
             text=(
                 f"EN CURSO!\n"
-                f"⏳ Tiempo: {format_time(remaining)}\n"
-                f"💰 Mejor oferta: ${highest_bid}\n"
-                f"👤 Líder: {highest_user}"
+                f"{format_time(remaining)}\n"
+                f"Oferta: ${highest_bid}\n"
+                f"{highest_user}"
             )
         )
     except Exception as e:
