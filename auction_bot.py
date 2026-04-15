@@ -36,7 +36,6 @@ extension_count = 0
 final_extension_used = False
 bids_last_minute = 0
 
-# 🆕 PAUSA
 paused = False
 remaining_on_pause = 0
 
@@ -84,7 +83,16 @@ async def timer_callback(context: ContextTypes.DEFAULT_TYPE):
         if timer_job:
             timer_job.schedule_removal()
 
-        # 🔥 MENSAJE FINAL NUEVO (no editado)
+        # 🔴 CIERRE
+        await context.bot.send_message(
+            chat_id=chat_id_global,
+            text="🚫 CERRADA! No se aceptan más ofertas"
+        )
+
+        # ⏳ DELAY
+        await asyncio.sleep(2)
+
+        # 🏁 RESULTADO FINAL
         await context.bot.send_message(
             chat_id=chat_id_global,
             text=(
@@ -107,7 +115,7 @@ async def timer_callback(context: ContextTypes.DEFAULT_TYPE):
                 f"{highest_user}"
             )
         )
-    except Exception as e:
+    except:
         pass
 
 
@@ -131,7 +139,6 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     timer_job = context.job_queue.run_repeating(timer_callback, interval=5, first=0)
 
 
-# 🆕 PAUSE
 async def pause(update: Update, context: ContextTypes.DEFAULT_TYPE):
     global paused, remaining_on_pause, end_time
 
@@ -149,7 +156,6 @@ async def pause(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
 
-# 🆕 RESUME
 async def resume(update: Update, context: ContextTypes.DEFAULT_TYPE):
     global paused, end_time
 
@@ -188,6 +194,7 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     global end_time, extension_count, final_extension_used, bids_last_minute
 
     if not timer_active:
+        await update.message.reply_text("🚫 Subasta cerrada")
         return
 
     if paused:
@@ -203,19 +210,18 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user.first_name
     remaining = int(end_time - time.time())
 
-    # 🔥 VALIDACIÓN BASE
     if oferta <= highest_bid:
         await update.message.reply_text(f"❌ Mínimo: ${highest_bid + 1}")
         return
 
-    # 🔥 ANTI ERRORES (incremento máximo)
+    # 🔥 ANTI ERROR
     if highest_bid > 0 and (oferta - highest_bid) > MAX_INCREMENT:
         await update.message.reply_text(
             f"⚠️ Incremento muy alto\nMáximo permitido: ${MAX_INCREMENT}"
         )
         return
 
-    # ✅ ACEPTAR OFERTA
+    # ✅ ACEPTAR
     highest_bid = oferta
     highest_user = user
 
