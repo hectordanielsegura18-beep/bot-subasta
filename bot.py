@@ -84,5 +84,76 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     message_id = msg.message_id
 
     # 🔥 Timer correcto (sin threading)
-    context.job_queue.run_repeating(timer_callback, interval=
+    context.job_queue.run_repeating(timer_callback, interval=1, first=0)
 
+
+async def stop(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    global timer_active
+
+    if update.effective_user.id != ADMIN_ID:
+        await update.message.reply_text("❌ No tienes permiso")
+        return
+
+    timer_active = False
+    await update.message.reply_text("🛑 Subasta detenida")
+
+
+async def set_time(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    global timer_total
+
+    try:
+        minutos = int(context.args[0])
+        timer_total = minutos * 60
+        await update.message.reply_text(f"⏱ Tiempo configurado a {minutos} minutos")
+    except:
+        await update.message.reply_text("Uso: /settime 5")
+
+
+# ================== MENSAJES ==================
+async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    global end_time, timer_active, highest_bid, highest_user
+
+    if not timer_active:
+        return
+
+    texto = update.message.text
+
+    # Solo números
+    if not texto.isdigit():
+        return
+
+    oferta = int(texto)
+    user = update.effective_user.first_name
+
+    remaining = int(end_time - time.time())
+
+    if oferta > highest_bid:
+        highest_bid = oferta
+        highest_user = user
+
+        await update.message.reply_text(f"💰 Nueva mejor oferta: ${oferta} por {user}")
+
+        if remaining <= 60:
+            end_time += 120
+            await update.message.reply_text("🔥 Último minuto! +2 minutos")
+    else:
+        await update.message.reply_text("❌ Oferta menor a la actual")
+
+
+# ================== APP ==================
+app = ApplicationBuilder().token(TOKEN).build()
+
+app.add_handler(CommandHandler("start", start))
+app.add_handler(CommandHandler("stop", stop))
+app.add_handler(CommandHandler("settime", set_time))
+app.add_handler(MessageHandler(filters.TEXT & (~filters.COMMAND), message_handler))
+
+
+# ================== RUN ==================
+if _name_ == "_main_":
+    print("Bot corriendo...")
+
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+
+    loop.run_until_complete(app.run_polling())
