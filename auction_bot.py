@@ -2,11 +2,14 @@ import time
 import os
 import asyncio
 from datetime import datetime
+
 import pytz
 from telegram import Update
 from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, filters, ContextTypes
 
-# ================== VARIABLES ==================
+
+# ================== CONFIG ==================
+
 TOKEN = os.getenv("TOKEN")
 ADMIN_ID = os.getenv("ADMIN_ID")
 
@@ -17,11 +20,13 @@ if not ADMIN_ID:
 
 ADMIN_ID = int(ADMIN_ID)
 
-# ================== CONFIG ==================
-timer_total = 180
-MAX_INCREMENT = 500
+TIMER_DEFAULT = 180       # segundos
+MAX_INCREMENT = 500       # incremento máximo por oferta
+TZ_MEXICO = pytz.timezone("America/Mexico_City")
+
 
 # ================== ESTADO ==================
+
 end_time = None
 timer_active = False
 message_id = None
@@ -38,9 +43,11 @@ bids_last_minute = 0
 
 paused = False
 remaining_on_pause = 0
+timer_total = TIMER_DEFAULT
 
 
 # ================== HELPERS ==================
+
 def format_time(seconds: int) -> str:
     m = seconds // 60
     s = seconds % 60
@@ -51,24 +58,33 @@ def reset_state():
     global end_time, timer_active, message_id, chat_id_global, timer_job
     global highest_bid, highest_user, highest_bid_time
     global extension_count, final_extension_used, bids_last_minute
-    global paused, remaining_on_pause
+    global paused, remaining_on_pause, timer_total
 
     end_time = None
     timer_active = False
     message_id = None
     chat_id_global = None
     timer_job = None
+
     highest_bid = 0
     highest_user = "Nadie"
     highest_bid_time = None
+
     extension_count = 0
     final_extension_used = False
     bids_last_minute = 0
+
     paused = False
     remaining_on_pause = 0
+    timer_total = TIMER_DEFAULT
+
+
+def is_admin(update: Update) -> bool:
+    return update.effective_user.id == ADMIN_ID
 
 
 # ================== TIMER ==================
+
 async def timer_callback(context: ContextTypes.DEFAULT_TYPE):
     global timer_active
 
@@ -79,27 +95,20 @@ async def timer_callback(context: ContextTypes.DEFAULT_TYPE):
 
     if remaining <= 0:
         timer_active = False
+        timer_job.schedule_removal()
 
-        if timer_job:
-            timer_job.schedule_removal()
-
-        # 🔴 CIERRE
         await context.bot.send_message(
             chat_id=chat_id_global,
             text="🚫 CERRADA! No se aceptan más ofertas"
         )
-
-        # ⏳ DELAY
         await asyncio.sleep(2)
-
-        # 🏁 RESULTADO FINAL
         await context.bot.send_message(
             chat_id=chat_id_global,
             text=(
                 f"⏰ SUBASTA FINALIZADA\n\n"
                 f"🏆 Ganador: {highest_user}\n"
                 f"💰 Oferta ganadora: ${highest_bid}\n"
-                f"🕐 Hora última: {highest_bid_time if highest_bid_time else '—'}"
+                f"🕐 Hora última: {highest_bid_time or '—'}"
             )
         )
         return
@@ -115,12 +124,13 @@ async def timer_callback(context: ContextTypes.DEFAULT_TYPE):
                 f"{highest_user}"
             )
         )
-    except:
+    except Exception:
         pass
 
 
 # ================== COMANDOS ==================
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+
+async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     global timer_active, end_time, message_id, chat_id_global, timer_job
 
     if timer_active:
@@ -139,13 +149,10 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     timer_job = context.job_queue.run_repeating(timer_callback, interval=5, first=0)
 
 
-async def pause(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    global paused, remaining_on_pause, end_time
+async def cmd_pause(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    global paused, remaining_on_pause
 
-    if update.effective_user.id != ADMIN_ID:
-        return
-
-    if not timer_active or paused:
+    if not is_admin(update) or not timer_active or paused:
         return
 
     remaining_on_pause = int(end_time - time.time())
@@ -156,13 +163,10 @@ async def pause(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
 
-async def resume(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def cmd_resume(update: Update, context: ContextTypes.DEFAULT_TYPE):
     global paused, end_time
 
-    if update.effective_user.id != ADMIN_ID:
-        return
-
-    if not timer_active or not paused:
+    if not is_admin(update) or not timer_active or not paused:
         return
 
     end_time = time.time() + remaining_on_pause
@@ -171,54 +175,44 @@ async def resume(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("▶️ Subasta reanudada")
 
 
-async def stop(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    global timer_active, timer_job
+async def cmd_stop(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    global timer_active
 
-    if update.effective_user.id != ADMIN_ID:
-        return
-
-    if not timer_active:
+    if not is_admin(update) or not timer_active:
         return
 
     timer_active = False
-
-    if timer_job:
-        timer_job.schedule_removal()
+    timer_job.schedule_removal()
 
     await update.message.reply_text("🛑 Subasta detenida")
 
 
-async def set_time(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def cmd_settime(update: Update, context: ContextTypes.DEFAULT_TYPE):
     global timer_total, end_time
 
-    if update.effective_user.id != ADMIN_ID:
+    if not is_admin(update):
         await update.message.reply_text("❌ No tienes permiso")
         return
 
     try:
-        minutos = int(context.args[0])
-
-        if minutos <= 0:
+        minutes = int(context.args[0])
+        if minutes <= 0:
             raise ValueError
 
-        timer_total = minutos * 60
+        timer_total = minutes * 60
 
-        # 🔥 Si hay subasta activa, actualiza en vivo
         if timer_active:
             end_time = time.time() + timer_total
-            await update.message.reply_text(
-                f"⏱ Tiempo actualizado a {minutos} minutos"
-            )
+            await update.message.reply_text(f"⏱ Tiempo actualizado a {minutes} minuto(s)")
         else:
-            await update.message.reply_text(
-                f"⏱ Tiempo configurado a {minutos} minuto(s)"
-            )
+            await update.message.reply_text(f"⏱ Tiempo configurado a {minutes} minuto(s)")
 
     except (IndexError, ValueError):
         await update.message.reply_text("Uso correcto: /settime 5")
 
 
 # ================== MENSAJES ==================
+
 async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     global highest_bid, highest_user, highest_bid_time
     global end_time, extension_count, final_extension_used, bids_last_minute
@@ -232,7 +226,6 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     texto = update.message.text.strip()
-
     if not texto.isdigit():
         return
 
@@ -252,9 +245,7 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     highest_bid = oferta
     highest_user = user
-
-    tz_mexico = pytz.timezone("America/Mexico_City")
-    highest_bid_time = datetime.now(tz_mexico).strftime("%H:%M:%S")
+    highest_bid_time = datetime.now(TZ_MEXICO).strftime("%H:%M:%S")
 
     if remaining > 60:
         return
@@ -265,7 +256,6 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         end_time += 120
         extension_count += 1
         await update.message.reply_text("🔥 +2 minutos (extensión)")
-
     elif not final_extension_used and bids_last_minute >= 3:
         end_time += 120
         final_extension_used = True
@@ -273,18 +263,16 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 # ================== APP ==================
+
 app = ApplicationBuilder().token(TOKEN).build()
 
-app.add_handler(CommandHandler("start", start))
-app.add_handler(CommandHandler("pause", pause))
-app.add_handler(CommandHandler("resume", resume))
-app.add_handler(CommandHandler("stop", stop))
-app.add_handler(CommandHandler("settime", set_time))
-app.add_handler(MessageHandler(filters.TEXT & (~filters.COMMAND), message_handler))
+app.add_handler(CommandHandler("start",   cmd_start))
+app.add_handler(CommandHandler("pause",   cmd_pause))
+app.add_handler(CommandHandler("resume",  cmd_resume))
+app.add_handler(CommandHandler("stop",    cmd_stop))
+app.add_handler(CommandHandler("settime", cmd_settime))
+app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, message_handler))
 
-
-# ================== RUN ==================
 if __name__ == "__main__":
     print("Bot corriendo...")
-    asyncio.run(app.bot.delete_webhook(drop_pending_updates=True))
-    asyncio.run(app.run_polling())
+    app.run_polling(drop_pending_updates=True)
