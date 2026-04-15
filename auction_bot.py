@@ -94,7 +94,7 @@ async def timer_callback(context: ContextTypes.DEFAULT_TYPE):
             chat_id=chat_id_global,
             message_id=message_id,
             text=(
-                f"🚗 SUBASTA EN CURSO\n"
+                f"EN CURSO!\n"
                 f"⏳ Tiempo: {format_time(remaining)}\n"
                 f"💰 Mejor oferta: ${highest_bid}\n"
                 f"👤 Líder: {highest_user}"
