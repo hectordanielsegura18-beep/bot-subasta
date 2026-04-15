@@ -130,7 +130,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
     auction.message_id = msg.message_id
 
-    context.job_queue.run_repeating(timer_job, interval=2, first=0)
+    context.job_queue.run_repeating(timer_job, interval=5, first=0)
 
 
 async def pause(update: Update, context: ContextTypes.DEFAULT_TYPE):
