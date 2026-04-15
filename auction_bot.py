@@ -19,7 +19,7 @@ ADMIN_ID = int(ADMIN_ID)
 
 # ================== CONFIG ==================
 timer_total = 180
-MAX_INCREMENT = 500  # 🔥 evita errores de dedo
+MAX_INCREMENT = 500
 
 # ================== ESTADO ==================
 end_time = None
@@ -188,6 +188,36 @@ async def stop(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("🛑 Subasta detenida")
 
 
+async def set_time(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    global timer_total, end_time
+
+    if update.effective_user.id != ADMIN_ID:
+        await update.message.reply_text("❌ No tienes permiso")
+        return
+
+    try:
+        minutos = int(context.args[0])
+
+        if minutos <= 0:
+            raise ValueError
+
+        timer_total = minutos * 60
+
+        # 🔥 Si hay subasta activa, actualiza en vivo
+        if timer_active:
+            end_time = time.time() + timer_total
+            await update.message.reply_text(
+                f"⏱ Tiempo actualizado a {minutos} minutos"
+            )
+        else:
+            await update.message.reply_text(
+                f"⏱ Tiempo configurado a {minutos} minuto(s)"
+            )
+
+    except (IndexError, ValueError):
+        await update.message.reply_text("Uso correcto: /settime 5")
+
+
 # ================== MENSAJES ==================
 async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     global highest_bid, highest_user, highest_bid_time
@@ -214,14 +244,12 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(f"❌ Mínimo: ${highest_bid + 1}")
         return
 
-    # 🔥 ANTI ERROR
     if highest_bid > 0 and (oferta - highest_bid) > MAX_INCREMENT:
         await update.message.reply_text(
             f"⚠️ Incremento muy alto\nMáximo permitido: ${MAX_INCREMENT}"
         )
         return
 
-    # ✅ ACEPTAR
     highest_bid = oferta
     highest_user = user
 
@@ -251,10 +279,12 @@ app.add_handler(CommandHandler("start", start))
 app.add_handler(CommandHandler("pause", pause))
 app.add_handler(CommandHandler("resume", resume))
 app.add_handler(CommandHandler("stop", stop))
+app.add_handler(CommandHandler("settime", set_time))
 app.add_handler(MessageHandler(filters.TEXT & (~filters.COMMAND), message_handler))
 
 
 # ================== RUN ==================
 if __name__ == "__main__":
     print("Bot corriendo...")
+    asyncio.run(app.bot.delete_webhook(drop_pending_updates=True))
     asyncio.run(app.run_polling())
