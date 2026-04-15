@@ -1,6 +1,8 @@
 import time
 import os
 import asyncio
+from datetime import datetime
+import pytz
 from telegram import Update
 from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, filters, ContextTypes
 
@@ -26,6 +28,7 @@ timer_job = None  # FIX: referencia al job para poder cancelarlo
 
 highest_bid = 0
 highest_user = "Nadie"
+highest_bid_time = None  # Timestamp de la última puja ganadora
 
 extension_count = 0
 final_extension_used = False
@@ -52,6 +55,7 @@ def reset_state():
     timer_job = None
     highest_bid = 0
     highest_user = "Nadie"
+    highest_bid_time = None
     extension_count = 0
     final_extension_used = False
     bids_last_minute = 0
@@ -79,7 +83,8 @@ async def timer_callback(context: ContextTypes.DEFAULT_TYPE):
             text=(
                 f"⏰ SUBASTA FINALIZADA\n\n"
                 f"🏆 Ganador: {highest_user}\n"
-                f"💰 Oferta final: ${highest_bid}"
+                f"💰 Oferta final: ${highest_bid}\n"
+                f"🕐 Última puja: {highest_bid_time if highest_bid_time else '—'}"
             )
         )
         return
@@ -181,7 +186,7 @@ async def set_time(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 # ================== MENSAJES ==================
 async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    global highest_bid, highest_user
+    global highest_bid, highest_user, highest_bid_time
     global end_time, extension_count, final_extension_used, bids_last_minute
 
     if not timer_active:
@@ -204,7 +209,8 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     highest_bid = oferta
     highest_user = user
-    await update.message.reply_text(f"💰 Nueva mejor oferta: ${oferta} por {user}")
+    tz_mexico = pytz.timezone("America/Mexico_City")
+    highest_bid_time = datetime.now(tz_mexico).strftime("%H:%M:%S")
 
     if remaining > 60:
         return
