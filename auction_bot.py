@@ -4,7 +4,7 @@ import asyncio
 from datetime import datetime
 
 import pytz
-from telegram import Update
+from telegram import Update, Bot
 from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, filters, ContextTypes
 
 
@@ -31,7 +31,7 @@ end_time = None
 timer_active = False
 message_id = None
 chat_id_global = None
-timer_job = None
+timer_task: asyncio.Task = None
 
 highest_bid = 0
 highest_user = "Nadie"
@@ -55,7 +55,7 @@ def format_time(seconds: int) -> str:
 
 
 def reset_state():
-    global end_time, timer_active, message_id, chat_id_global, timer_job
+    global end_time, timer_active, message_id, chat_id_global, timer_task
     global highest_bid, highest_user, highest_bid_time
     global extension_count, final_extension_used, bids_last_minute
     global paused, remaining_on_pause, timer_total
@@ -64,7 +64,7 @@ def reset_state():
     timer_active = False
     message_id = None
     chat_id_global = None
-    timer_job = None
+    timer_task = None
 
     highest_bid = 0
     highest_user = "Nadie"
@@ -85,53 +85,59 @@ def is_admin(update: Update) -> bool:
 
 # ================== TIMER ==================
 
-async def timer_callback(context: ContextTypes.DEFAULT_TYPE):
+async def timer_loop(bot: Bot):
+    """Loop principal del timer. Corre cada 5 segundos y edita el mensaje de estado."""
     global timer_active
 
-    if not timer_active or paused:
-        return
+    while timer_active:
+        await asyncio.sleep(5)
 
-    remaining = int(end_time - time.time())
+        if not timer_active:
+            break
 
-    if remaining <= 0:
-        timer_active = False
-        timer_job.schedule_removal()
+        if paused:
+            continue
 
-        await context.bot.send_message(
-            chat_id=chat_id_global,
-            text="🚫 CERRADA! No se aceptan más ofertas"
-        )
-        await asyncio.sleep(2)
-        await context.bot.send_message(
-            chat_id=chat_id_global,
-            text=(
-                f"⏰ SUBASTA FINALIZADA\n\n"
-                f"🏆 Ganador: {highest_user}\n"
-                f"💰 Oferta ganadora: ${highest_bid}\n"
-                f"🕐 Hora última: {highest_bid_time or '—'}"
+        remaining = int(end_time - time.time())
+
+        if remaining <= 0:
+            timer_active = False
+
+            await bot.send_message(
+                chat_id=chat_id_global,
+                text="🚫 CERRADA! No se aceptan más ofertas"
             )
-        )
-        return
-
-    try:
-        await context.bot.edit_message_text(
-            chat_id=chat_id_global,
-            message_id=message_id,
-            text=(
-                f"EN CURSO!\n"
-                f"{format_time(remaining)}\n"
-                f"Oferta: ${highest_bid}\n"
-                f"{highest_user}"
+            await asyncio.sleep(2)
+            await bot.send_message(
+                chat_id=chat_id_global,
+                text=(
+                    f"⏰ SUBASTA FINALIZADA\n\n"
+                    f"🏆 Ganador: {highest_user}\n"
+                    f"💰 Oferta ganadora: ${highest_bid}\n"
+                    f"🕐 Hora última: {highest_bid_time or '—'}"
+                )
             )
-        )
-    except Exception:
-        pass
+            break
+
+        try:
+            await bot.edit_message_text(
+                chat_id=chat_id_global,
+                message_id=message_id,
+                text=(
+                    f"EN CURSO!\n"
+                    f"{format_time(remaining)}\n"
+                    f"Oferta: ${highest_bid}\n"
+                    f"{highest_user}"
+                )
+            )
+        except Exception:
+            pass
 
 
 # ================== COMANDOS ==================
 
 async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    global timer_active, end_time, message_id, chat_id_global, timer_job
+    global timer_active, end_time, message_id, chat_id_global, timer_task
 
     if timer_active:
         await update.message.reply_text("⚠️ Ya hay una subasta en curso.")
@@ -146,7 +152,7 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     msg = await update.message.reply_text("🚗 Iniciando subasta...")
     message_id = msg.message_id
 
-    timer_job = context.job_queue.run_repeating(timer_callback, interval=5, first=0)
+    timer_task = asyncio.create_task(timer_loop(context.bot))
 
 
 async def cmd_pause(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -182,7 +188,9 @@ async def cmd_stop(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     timer_active = False
-    timer_job.schedule_removal()
+
+    if timer_task and not timer_task.done():
+        timer_task.cancel()
 
     await update.message.reply_text("🛑 Subasta detenida")
 
