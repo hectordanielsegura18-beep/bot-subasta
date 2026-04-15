@@ -150,7 +150,7 @@ app.add_handler(MessageHandler(filters.TEXT & (~filters.COMMAND), message_handle
 
 
 # ================== RUN ==================
-if _name_ == "_main_":
+if __name__ == "__main__":
     print("Bot corriendo...")
 
     loop = asyncio.new_event_loop()
