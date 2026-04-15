@@ -1,6 +1,7 @@
 import time
 import os
 import asyncio
+import logging
 from datetime import datetime
 
 import pytz
@@ -10,196 +11,179 @@ from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, fil
 
 # ================== CONFIG ==================
 
+logging.basicConfig(level=logging.INFO)
+
 TOKEN = os.getenv("TOKEN")
 ADMIN_ID = os.getenv("ADMIN_ID")
 
-if not TOKEN:
-    raise ValueError("Falta TOKEN en las variables de entorno")
-if not ADMIN_ID:
-    raise ValueError("Falta ADMIN_ID en las variables de entorno")
+if not TOKEN or not ADMIN_ID:
+    raise ValueError("Faltan variables de entorno")
 
 ADMIN_ID = int(ADMIN_ID)
 
-TIMER_DEFAULT = 180       # segundos
-MAX_INCREMENT = 500       # incremento máximo por oferta
-TZ_MEXICO = pytz.timezone("America/Mexico_City")
+TIMER_DEFAULT = 180
+MAX_INCREMENT = 500
+TZ = pytz.timezone("America/Mexico_City")
 
 
 # ================== ESTADO ==================
 
-end_time = None
-timer_active = False
-message_id = None
-chat_id_global = None
-timer_task: asyncio.Task = None
+class AuctionState:
+    def __init__(self):
+        self.reset()
 
-highest_bid = 0
-highest_user = "Nadie"
-highest_bid_time = None
+    def reset(self):
+        self.timer_active = False
+        self.paused = False
+        self.end_time = None
+        self.remaining_on_pause = 0
 
-extension_count = 0
-final_extension_used = False
-bids_last_minute = 0
+        self.chat_id = None
+        self.message_id = None
+        self.timer_task = None
 
-paused = False
-remaining_on_pause = 0
-timer_total = TIMER_DEFAULT
+        self.highest_bid = 0
+        self.highest_user = "Nadie"
+        self.highest_bid_time = None
+
+        self.extension_count = 0
+        self.final_extension_used = False
+        self.bids_last_minute = 0
+
+        self.timer_total = TIMER_DEFAULT
+
+
+state = AuctionState()
 
 
 # ================== HELPERS ==================
 
-def format_time(seconds: int) -> str:
-    m = seconds // 60
-    s = seconds % 60
-    return f"{m:02d}:{s:02d}"
-
-
-def reset_state():
-    global end_time, timer_active, message_id, chat_id_global, timer_task
-    global highest_bid, highest_user, highest_bid_time
-    global extension_count, final_extension_used, bids_last_minute
-    global paused, remaining_on_pause, timer_total
-
-    end_time = None
-    timer_active = False
-    message_id = None
-    chat_id_global = None
-    timer_task = None
-
-    highest_bid = 0
-    highest_user = "Nadie"
-    highest_bid_time = None
-
-    extension_count = 0
-    final_extension_used = False
-    bids_last_minute = 0
-
-    paused = False
-    remaining_on_pause = 0
-    timer_total = TIMER_DEFAULT
-
-
-def is_admin(update: Update) -> bool:
+def is_admin(update: Update):
     return update.effective_user.id == ADMIN_ID
+
+
+def format_time(seconds):
+    m, s = divmod(max(seconds, 0), 60)
+    return f"{m:02d}:{s:02d}"
 
 
 # ================== TIMER ==================
 
 async def timer_loop(bot: Bot):
-    """Loop principal del timer. Corre cada 5 segundos y edita el mensaje de estado."""
-    global timer_active
+    logging.info("Timer iniciado")
 
-    while timer_active:
+    while state.timer_active:
         await asyncio.sleep(5)
 
-        if not timer_active:
+        if not state.timer_active:
             break
 
-        if paused:
+        if state.paused:
             continue
 
-        remaining = int(end_time - time.time())
+        remaining = int(state.end_time - time.time())
 
         if remaining <= 0:
-            timer_active = False
+            state.timer_active = False
 
-            await bot.send_message(
-                chat_id=chat_id_global,
-                text="🚫 CERRADA! No se aceptan más ofertas"
-            )
-            await asyncio.sleep(2)
-            await bot.send_message(
-                chat_id=chat_id_global,
-                text=(
+            try:
+                await bot.send_message(state.chat_id, "🚫 CERRADA! No se aceptan más ofertas")
+                await asyncio.sleep(2)
+                await bot.send_message(
+                    state.chat_id,
                     f"⏰ SUBASTA FINALIZADA\n\n"
-                    f"🏆 Ganador: {highest_user}\n"
-                    f"💰 Oferta ganadora: ${highest_bid}\n"
-                    f"🕐 Hora última: {highest_bid_time or '—'}"
+                    f"🏆 Ganador: {state.highest_user}\n"
+                    f"💰 Oferta: ${state.highest_bid}\n"
+                    f"🕐 Hora: {state.highest_bid_time or '—'}"
                 )
-            )
+            except Exception as e:
+                logging.error(f"Error cierre: {e}")
+
             break
 
         try:
             await bot.edit_message_text(
-                chat_id=chat_id_global,
-                message_id=message_id,
+                chat_id=state.chat_id,
+                message_id=state.message_id,
                 text=(
-                    f"EN CURSO!\n"
+                    f"EN CURSO\n"
                     f"{format_time(remaining)}\n"
-                    f"Oferta: ${highest_bid}\n"
-                    f"{highest_user}"
+                    f"${state.highest_bid}\n"
+                    f"{state.highest_user}"
                 )
             )
-        except Exception:
+        except:
             pass
 
 
 # ================== COMANDOS ==================
 
-async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    global timer_active, end_time, message_id, chat_id_global, timer_task
-
-    if timer_active:
-        await update.message.reply_text("⚠️ Ya hay una subasta en curso.")
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if state.timer_active:
+        await update.message.reply_text("⚠️ Ya hay una subasta activa")
         return
 
-    reset_state()
+    # tiempo opcional
+    if context.args:
+        try:
+            minutes = int(context.args[0])
+            if minutes <= 0:
+                raise ValueError
+            state.timer_total = minutes * 60
+        except:
+            await update.message.reply_text("Uso: /start 5")
+            return
 
-    chat_id_global = update.effective_chat.id
-    timer_active = True
-    end_time = time.time() + timer_total
+    state.reset()
 
-    msg = await update.message.reply_text("🚗 Iniciando subasta...")
-    message_id = msg.message_id
+    state.timer_active = True
+    state.chat_id = update.effective_chat.id
+    state.end_time = time.time() + state.timer_total
 
-    timer_task = asyncio.create_task(timer_loop(context.bot))
+    msg = await update.message.reply_text(
+        f"🚗 Subasta iniciada\n⏱ {state.timer_total // 60} min"
+    )
+    state.message_id = msg.message_id
+
+    state.timer_task = asyncio.create_task(timer_loop(context.bot))
 
 
-async def cmd_pause(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    global paused, remaining_on_pause
-
-    if not is_admin(update) or not timer_active or paused:
+async def pause(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not is_admin(update) or not state.timer_active or state.paused:
         return
 
-    remaining_on_pause = int(end_time - time.time())
-    paused = True
+    state.remaining_on_pause = int(state.end_time - time.time())
+    state.paused = True
 
     await update.message.reply_text(
-        f"⏸ Subasta en pausa\nTiempo restante: {format_time(remaining_on_pause)}"
+        f"⏸ Pausada\n{format_time(state.remaining_on_pause)}"
     )
 
 
-async def cmd_resume(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    global paused, end_time
-
-    if not is_admin(update) or not timer_active or not paused:
+async def resume(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not is_admin(update) or not state.timer_active or not state.paused:
         return
 
-    end_time = time.time() + remaining_on_pause
-    paused = False
+    state.end_time = time.time() + state.remaining_on_pause
+    state.paused = False
 
-    await update.message.reply_text("▶️ Subasta reanudada")
+    await update.message.reply_text("▶️ Reanudada")
 
 
-async def cmd_stop(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    global timer_active
-
-    if not is_admin(update) or not timer_active:
+async def stop(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not is_admin(update) or not state.timer_active:
         return
 
-    timer_active = False
+    state.timer_active = False
 
-    if timer_task and not timer_task.done():
-        timer_task.cancel()
+    if state.timer_task:
+        state.timer_task.cancel()
 
     await update.message.reply_text("🛑 Subasta detenida")
 
 
-async def cmd_settime(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    global timer_total, end_time
-
+async def settime(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not is_admin(update):
-        await update.message.reply_text("❌ No tienes permiso")
         return
 
     try:
@@ -207,80 +191,63 @@ async def cmd_settime(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if minutes <= 0:
             raise ValueError
 
-        timer_total = minutes * 60
+        state.timer_total = minutes * 60
 
-        if timer_active:
-            end_time = time.time() + timer_total
-            await update.message.reply_text(f"⏱ Tiempo actualizado a {minutes} minuto(s)")
+        if state.timer_active:
+            state.end_time = time.time() + state.timer_total
+            await update.message.reply_text(f"⏱ Actualizado a {minutes} min")
         else:
-            await update.message.reply_text(f"⏱ Tiempo configurado a {minutes} minuto(s)")
+            await update.message.reply_text(f"⏱ Configurado a {minutes} min")
 
-    except (IndexError, ValueError):
-        await update.message.reply_text("Uso correcto: /settime 5")
+    except:
+        await update.message.reply_text("Uso: /settime 5")
 
 
 # ================== MENSAJES ==================
 
 async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    global highest_bid, highest_user, highest_bid_time
-    global end_time, extension_count, final_extension_used, bids_last_minute
-
-    if not timer_active:
-        await update.message.reply_text("🚫 Subasta cerrada")
+    if not state.timer_active:
         return
 
-    if paused:
-        await update.message.reply_text("⏸ Subasta en pausa")
+    if state.paused:
         return
 
-    texto = update.message.text.strip()
-    if not texto.isdigit():
+    text = update.message.text.strip()
+
+    if not text.isdigit():
         return
 
-    oferta = int(texto)
+    bid = int(text)
     user = update.effective_user.first_name
-    remaining = int(end_time - time.time())
 
-    if oferta <= highest_bid:
-        await update.message.reply_text(f"❌ Mínimo: ${highest_bid + 1}")
+    if bid <= state.highest_bid:
         return
 
-    if highest_bid > 0 and (oferta - highest_bid) > MAX_INCREMENT:
-        await update.message.reply_text(
-            f"⚠️ Incremento muy alto\nMáximo permitido: ${MAX_INCREMENT}"
-        )
+    if state.highest_bid > 0 and (bid - state.highest_bid) > MAX_INCREMENT:
+        await update.message.reply_text("⚠️ Incremento muy alto")
         return
 
-    highest_bid = oferta
-    highest_user = user
-    highest_bid_time = datetime.now(TZ_MEXICO).strftime("%H:%M:%S")
-
-    if remaining > 60:
-        return
-
-    bids_last_minute += 1
-
-    if extension_count < 2:
-        end_time += 120
-        extension_count += 1
-        await update.message.reply_text("🔥 +2 minutos (extensión)")
-    elif not final_extension_used and bids_last_minute >= 3:
-        end_time += 120
-        final_extension_used = True
-        await update.message.reply_text("🚨 EXTENSIÓN FINAL")
+    state.highest_bid = bid
+    state.highest_user = user
+    state.highest_bid_time = datetime.now(TZ).strftime("%H:%M:%S")
 
 
 # ================== APP ==================
 
 app = ApplicationBuilder().token(TOKEN).build()
 
-app.add_handler(CommandHandler("start",   cmd_start))
-app.add_handler(CommandHandler("pause",   cmd_pause))
-app.add_handler(CommandHandler("resume",  cmd_resume))
-app.add_handler(CommandHandler("stop",    cmd_stop))
-app.add_handler(CommandHandler("settime", cmd_settime))
+app.add_handler(CommandHandler("start", start))
+app.add_handler(CommandHandler("pause", pause))
+app.add_handler(CommandHandler("resume", resume))
+app.add_handler(CommandHandler("stop", stop))
+app.add_handler(CommandHandler("settime", settime))
+
 app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, message_handler))
 
+
+# ================== RUN ==================
+
 if __name__ == "__main__":
-    print("Bot corriendo...")
+    logging.info("Bot corriendo...")
     app.run_polling(drop_pending_updates=True)
+
