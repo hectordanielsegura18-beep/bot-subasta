@@ -123,7 +123,6 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("⚠️ Ya hay una subasta activa")
         return
 
-    # tiempo opcional
     if context.args:
         try:
             minutes = int(context.args[0])
@@ -203,13 +202,21 @@ async def settime(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("Uso: /settime 5")
 
 
+# 💀 NUEVO COMANDO KILL
+async def kill(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not is_admin(update):
+        return
+
+    await update.message.reply_text("💀 Apagando bot...")
+
+    logging.warning("Bot detenido manualmente por ADMIN")
+    os._exit(0)
+
+
 # ================== MENSAJES ==================
 
 async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not state.timer_active:
-        return
-
-    if state.paused:
+    if not state.timer_active or state.paused:
         return
 
     text = update.message.text.strip()
@@ -241,6 +248,7 @@ app.add_handler(CommandHandler("pause", pause))
 app.add_handler(CommandHandler("resume", resume))
 app.add_handler(CommandHandler("stop", stop))
 app.add_handler(CommandHandler("settime", settime))
+app.add_handler(CommandHandler("kill", kill))
 
 app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, message_handler))
 
@@ -250,4 +258,3 @@ app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, message_handler)
 if __name__ == "__main__":
     logging.info("Bot corriendo...")
     app.run_polling(drop_pending_updates=True)
-
