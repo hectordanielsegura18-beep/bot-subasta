@@ -96,8 +96,21 @@ async def timer_callback(context: ContextTypes.DEFAULT_TYPE):
             )
         )
     except Exception as e:
-        # Ignorar errores de "mensaje no modificado" que Telegram lanza frecuentemente
-        if "Message is not modified" not in str(e):
+        error_str = str(e)
+
+        if "Message is not modified" in error_str:
+            pass  # Normal, el mensaje no cambió
+
+        elif "Flood control exceeded" in error_str:
+            # Extraer segundos de espera y pausar
+            try:
+                retry_seconds = int(error_str.split("Retry in ")[1].split(" ")[0])
+            except (IndexError, ValueError):
+                retry_seconds = 5
+            print(f"[timer] Flood control, esperando {retry_seconds}s")
+            await asyncio.sleep(retry_seconds)
+
+        else:
             print(f"[timer_callback] Error inesperado: {e}")
 
 
@@ -119,7 +132,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     message_id = msg.message_id
 
     # FIX: guardar referencia al job para poder cancelarlo después
-    timer_job = context.job_queue.run_repeating(timer_callback, interval=1, first=0)
+    timer_job = context.job_queue.run_repeating(timer_callback, interval=5, first=0)
 
 
 async def stop(update: Update, context: ContextTypes.DEFAULT_TYPE):
